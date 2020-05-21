@@ -1,21 +1,16 @@
 #!/usr/bin/env python
 
 from setuptools import setup
-from Cython.Build import cythonize
-import numpy as np
+from setuptools import Extension
 import os
 import subprocess
 import sys
+import glob
 
-is_posix = (os.name == "posix")
-
-if is_posix:
-    os_name = subprocess.check_output("uname").decode("utf8")
-    if "Darwin" in os_name:
-        os.environ["CFLAGS"] = "-stdlib=libc++ -std=c++11"
-    else:
-        os.environ["CFLAGS"] = "-std=c++11"
-
+if sys.platform == "darwin":
+    extra_compile_args = "-stdlib=libc++ -std=c++11"
+elif sys.platform != "win32":
+    extra_compile_args = "-std=c++11"
 
 def main():
     cpu_count = os.cpu_count() or 8
@@ -63,9 +58,11 @@ def main():
         ],
     }
     install_requires = [
+        "cython==0.29.19",
         "aioconsole",
         "aiokafka",
         "attrdict",
+        "cachetools",
         "cytoolz",
         "eth-abi",
         "eth-account",
@@ -74,12 +71,11 @@ def main():
         "eth-keyfile",
         "eth-keys",
         "eth-rlp",
-        "eth-utils",
         "hexbytes",
-        "kafka-python",
         "lru-dict",
         "parsimonious",
         "pycryptodome",
+        "ruamel.yaml",
         "requests",
         "rlp",
         "toolz",
@@ -88,31 +84,48 @@ def main():
         "web3",
         "websockets",
         "aiohttp",
-        "async-timeout",
         "attrs",
         "certifi",
         "chardet",
-        "cython==0.29.15",
-        "idna",
-        "idna_ssl",
+        "idna; python_version<'3.7'",
+        "idna_ssl; python_version<'3.7'",
         "multidict",
         "numpy",
         "pandas",
         "pytz",
         "pyyaml",
+        "pyasn1",
         "python-binance==0.7.1",
         "sqlalchemy",
         "ujson",
         "yarl",
     ]
 
-    cython_kwargs = {
-        "language": "c++",
-        "language_level": 3,
-    }
+    ext_include = ["hummingbot/core", "hummingbot/core", "hummingbot/core/data_type"]
+    try:
+        import numpy as np
+        ext_include += [np.get_include()]
+    except Exception:
+        pass
 
-    if is_posix:
-        cython_kwargs["nthreads"] = cpu_count
+    ext_modules = []
+    for package in packages:
+        path = package.replace(".", "/") + "/*.pyx"
+        for pyxfile in glob.glob(path):
+            module = pyxfile.replace(".", "/")[:-4]
+            ext_modules.append(
+                Extension(
+                    module,
+                    [pyxfile],
+                    include_dirs=ext_include,
+                    language="c++",
+                    extra_compile_args=extra_compile_args
+                )
+            )
+
+    for e in ext_modules:
+        e.cython_directives = {'language_level': "3"}
+
 
     if "DEV_MODE" in os.environ:
         version += ".dev1"
@@ -121,7 +134,7 @@ def main():
         ]
         package_data["hummingbot"].append("core/cpp/*.cpp")
 
-    if len(sys.argv) > 1 and sys.argv[1] == "build_ext" and is_posix:
+    if len(sys.argv) > 1 and sys.argv[1] == "build_ext" and sys.platform != "win32":
         sys.argv.append(f"--parallel={cpu_count}")
 
     setup(name="hummingbot",
@@ -134,10 +147,12 @@ def main():
           packages=packages,
           package_data=package_data,
           install_requires=install_requires,
-          ext_modules=cythonize(["hummingbot/**/*.pyx"], **cython_kwargs),
-          include_dirs=[
-              np.get_include()
+          setup_requires=[
+              "setuptools>=18.0", # Handles Cython extensions natively
+              "cython==0.29.19",
+              "numpy"
           ],
+          ext_modules=ext_modules,
           scripts=[
               "bin/hummingbot.py",
               "bin/hummingbot_quickstart.py"
